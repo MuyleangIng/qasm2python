@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qasm2python"
+version = "0.1.0"
+description = "Convert OpenQASM 3 to Python Qiskit code"
+authors = [
+    { name="Muyleang Ing", email="muyleanging@gmail.com" }
+]
+dependencies = [
+    "qiskit>=0.45"
+]
+requires-python = ">=3.8"
+readme = "README.md"
+license = {text = "MIT"}
+
+[project.urls]
+Homepage = "https://github.com/yourusername/qasm2python"
