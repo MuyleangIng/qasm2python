@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qasm2python"
-version = "0.3.0"
+version = "0.3.1"
 description = "Convert OpenQASM 3 to Python Qiskit code dynamically."
 readme = "README.md"
 requires-python = ">=3.8"
