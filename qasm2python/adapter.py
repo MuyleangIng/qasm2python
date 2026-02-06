@@ -121,9 +121,23 @@ def _cindex(circ: QuantumCircuit, c) -> int:
 # -----------------------------
 def convert_qasm_to_python(
     qasm_source: str,
-    var_name: str = "qc",
+    var_name: str | None = None,
     include_imports: bool = True,
 ) -> str:
+    """
+    Convert OpenQASM 2/3 to Python Qiskit code.
+
+    Parameters:
+        qasm_source (str): QASM input string
+        var_name (str, optional): Name of generated QuantumCircuit variable (default: "qc")
+        include_imports (bool): Whether to include import statements
+
+    Returns:
+        str: Generated Python code
+    """
+
+    if var_name is None:
+        var_name = "qc"
 
     circuit = load_any_qasm(qasm_source)
     lines: List[str] = []
