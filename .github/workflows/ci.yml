@@ -73,7 +73,7 @@ jobs:
       - name: Install package + test deps
         run: |
           pip install -e ".[dev]"
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov qiskit qiskit_qasm3_import
 
       - name: Run pytest
         run: |
