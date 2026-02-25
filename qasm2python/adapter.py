@@ -20,22 +20,7 @@ STANDARD_GATES = {
 
 import re
 
-def convert_qasm_to_python(qasm_source: str, var_name: str = None, include_imports: bool = True):
-    """
-    Convert an OpenQASM 2.0 or 3.0 string into executable Qiskit Python code.
 
-    Args:
-        qasm_source (str): The QASM source code to convert.
-        var_name (str, optional): Name for the QuantumCircuit variable. Defaults to 'qc'.
-        include_imports (bool): Whether to include the qiskit import line. Defaults to True.
-
-    Returns:
-        str: A string of Python code that creates a Qiskit QuantumCircuit.
-
-    Example:
-        >>> code = convert_qasm_to_python("OPENQASM 3; qubit[1] q; h q[0];")
-        >>> print(code)
-    """
 
 def sanitize_qasm_modifiers(qasm_source: str) -> str:
     """
