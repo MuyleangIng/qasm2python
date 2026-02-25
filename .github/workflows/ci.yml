@@ -1,194 +1,152 @@
-# ============================================================
-# .github/workflows/ci.yml
-# Place this file at: .github/workflows/ci.yml
-# in your qasm2python repo
-# ============================================================
-#
-# This workflow does 4 things automatically:
-#   1. LINT    — check code style with flake8
-#   2. TEST    — run pytest on Python 3.9, 3.10, 3.11, 3.12
-#   3. REVIEW  — Claude AI reviews every Pull Request
-#   4. PUBLISH — auto-publish to PyPI when you push a version tag
-#
-# SETUP (one time):
-#   Go to GitHub → your repo → Settings → Secrets → Actions
-#   Add these secrets:
-#     ANTHROPIC_API_KEY  → your Anthropic key (for Claude review)
-#     PYPI_API_TOKEN     → your PyPI token   (for auto-publish)
-# ============================================================
+# tests/test_converter.py
+# Place this at: tests/test_converter.py in your qasm2python repo
+# Run with: pytest tests/ -v
 
-name: CI/CD
+import pytest
+from qasm2python import convert_qasm_to_python
 
-on:
-  push:
-    branches: [main]
-    tags: ["v*.*.*"]          # triggers PyPI publish on version tags
-  pull_request:
-    branches: [main]
 
-jobs:
+# ── Basic conversion ──────────────────────────────────────
 
-  # ────────────────────────────────────────────────────────
-  # JOB 1: Lint
-  # ────────────────────────────────────────────────────────
-  lint:
-    name: Lint (flake8)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+def test_simple_bell_circuit():
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[2] q;
+h q[0];
+cx q[0], q[1];
+"""
+    result = convert_qasm_to_python(qasm)
+    assert "QuantumCircuit" in result
+    assert "qc.h(0)" in result
+    assert "qc.cx(0, 1)" in result
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
-      - name: Install flake8
-        run: pip install flake8
+def test_default_variable_name_is_qc():
+    qasm = "OPENQASM 3;\nqubit[1] q;\nh q[0];"
+    result = convert_qasm_to_python(qasm)
+    assert "qc = QuantumCircuit" in result
 
-      - name: Run flake8
-        run: |
-          flake8 qasm2python/ \
-            --max-line-length=100 \
-            --ignore=E501,W503 \
-            --statistics
 
-  # ────────────────────────────────────────────────────────
-  # JOB 2: Test matrix (Python 3.9 → 3.12)
-  # ────────────────────────────────────────────────────────
-  test:
-    name: Test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    needs: lint
+def test_custom_variable_name():
+    qasm = "OPENQASM 3;\nqubit[1] q;\nh q[0];"
+    result = convert_qasm_to_python(qasm, var_name="my_circuit")
+    assert "my_circuit = QuantumCircuit" in result
+    assert "qc" not in result.split("=")[0]  # default name not used
 
-    strategy:
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12"]
 
-    steps:
-      - uses: actions/checkout@v4
+def test_include_imports_true():
+    qasm = "OPENQASM 3;\nqubit[1] q;\nh q[0];"
+    result = convert_qasm_to_python(qasm, include_imports=True)
+    assert "from qiskit import QuantumCircuit" in result
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
 
-      - name: Install package + test deps
-        run: |
-          pip install -e ".[dev]"
-          pip install pytest pytest-cov
+def test_include_imports_false():
+    qasm = "OPENQASM 3;\nqubit[1] q;\nh q[0];"
+    result = convert_qasm_to_python(qasm, include_imports=False)
+    assert "from qiskit import QuantumCircuit" not in result
 
-      - name: Run pytest
-        run: |
-          pytest tests/ -v \
-            --cov=qasm2python \
-            --cov-report=term-missing \
-            --tb=short
 
-  # ────────────────────────────────────────────────────────
-  # JOB 3: Claude AI Code Review (runs on Pull Requests only)
-  # ────────────────────────────────────────────────────────
-  claude-review:
-    name: Claude AI Review
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    needs: lint
+# ── Gate coverage ─────────────────────────────────────────
 
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0    # need full history to get the diff
+def test_single_qubit_gates():
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[1] q;
+x q[0];
+y q[0];
+z q[0];
+s q[0];
+t q[0];
+"""
+    result = convert_qasm_to_python(qasm)
+    for gate in ["qc.x(0)", "qc.y(0)", "qc.z(0)", "qc.s(0)", "qc.t(0)"]:
+        assert gate in result, f"Missing gate: {gate}"
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
-      - name: Install Anthropic SDK
-        run: pip install anthropic
+def test_rotation_gates():
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[1] q;
+rx(1.5707) q[0];
+ry(3.1415) q[0];
+rz(0.7854) q[0];
+"""
+    result = convert_qasm_to_python(qasm)
+    assert "qc.rx(" in result
+    assert "qc.ry(" in result
+    assert "qc.rz(" in result
 
-      - name: Get PR diff
-        id: diff
-        run: |
-          git diff origin/${{ github.base_ref }}...HEAD \
-            -- '*.py' > pr_diff.txt
-          echo "diff_lines=$(wc -l < pr_diff.txt)" >> $GITHUB_OUTPUT
 
-      - name: Run Claude review
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          python - <<'EOF'
-          import anthropic, sys, json, os
+def test_ccx_toffoli():
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[3] q;
+ccx q[0], q[1], q[2];
+"""
+    result = convert_qasm_to_python(qasm)
+    assert "qc.ccx(0, 1, 2)" in result
 
-          diff = open("pr_diff.txt").read()
-          if not diff.strip():
-              print("No Python changes to review.")
-              sys.exit(0)
 
-          client = anthropic.Anthropic()
-          response = client.messages.create(
-              model="claude-opus-4-6",
-              max_tokens=1024,
-              messages=[{
-                  "role": "user",
-                  "content": f"""You are reviewing a Pull Request for the qasm2python package.
-          This package converts OpenQASM 2.0/3.0 code into Qiskit Python code.
+# ── Modifier sanitization ─────────────────────────────────
 
-          Review the following git diff and provide:
-          1. A brief summary of what changed
-          2. Any bugs or logic errors
-          3. Any issues specific to QASM parsing or Qiskit circuit generation
-          4. Code quality suggestions
-          5. Overall verdict: APPROVE or REQUEST_CHANGES
+def test_ctrl_modifier_sanitized():
+    """ctrl @ and ctrl(2) @ modifiers should not crash the converter."""
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[3] q;
+gate mygate a, b, c {
+  ctrl @ cx a, b;
+  ctrl(2) @ ccx a, b, c;
+}
+mygate q[0], q[1], q[2];
+"""
+    result = convert_qasm_to_python(qasm)
+    assert "QuantumCircuit" in result   # should still produce valid output
 
-          Git diff:
-          ```
-          {diff[:6000]}
-          ```
 
-          Keep your review concise and actionable."""
-              }]
-          )
+# ── Output is executable Python ───────────────────────────
 
-          review = response.content[0].text
-          print("=" * 60)
-          print("CLAUDE CODE REVIEW")
-          print("=" * 60)
-          print(review)
-          print("=" * 60)
+def test_output_is_executable():
+    """The generated code should actually run via exec()."""
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[2] q;
+h q[0];
+cx q[0], q[1];
+"""
+    try:
+        from qiskit import QuantumCircuit  # skip if qiskit not installed
+    except ImportError:
+        pytest.skip("qiskit not installed")
 
-          # Fail the CI if Claude recommends changes
-          if "REQUEST_CHANGES" in review.upper():
-              print("\n⚠️  Claude recommends changes — marking as failed.")
-              sys.exit(1)
-          else:
-              print("\n✅  Claude approved the PR.")
-          EOF
+    code = convert_qasm_to_python(qasm)
+    namespace = {}
+    exec(code, namespace)
+    assert "qc" in namespace
+    circuit = namespace["qc"]
+    assert circuit.num_qubits == 2
 
-  # ────────────────────────────────────────────────────────
-  # JOB 4: Publish to PyPI (only on version tags like v1.2.3)
-  # ────────────────────────────────────────────────────────
-  publish:
-    name: Publish to PyPI
-    runs-on: ubuntu-latest
-    needs: [test]
-    if: startsWith(github.ref, 'refs/tags/v')
 
-    steps:
-      - uses: actions/checkout@v4
+# ── Edge cases ────────────────────────────────────────────
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+def test_empty_qasm_does_not_crash():
+    result = convert_qasm_to_python("OPENQASM 3;")
+    assert isinstance(result, str)
 
-      - name: Install build tools
-        run: pip install build twine
 
-      - name: Build package
-        run: python -m build
-
-      - name: Check dist
-        run: twine check dist/*
-
-      - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: twine upload dist/*
+def test_openqasm2_syntax():
+    qasm = """
+OPENQASM 2.0;
+include "qelib1.inc";
+qreg q[2];
+h q[0];
+cx q[0], q[1];
+"""
+    result = convert_qasm_to_python(qasm)
+    assert "QuantumCircuit" in result
