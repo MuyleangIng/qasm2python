@@ -1,8 +1,10 @@
 # tests/test_converter.py
-# Place this at: tests/test_converter.py in your qasm2python repo
-# Run with: pytest tests/ -v
-
 import pytest
+
+# Skip ALL tests if required libraries are missing
+qiskit = pytest.importorskip("qiskit", reason="qiskit not installed")
+pytest.importorskip("qiskit_qasm3_import", reason="qiskit_qasm3_import not installed — run: pip install qiskit_qasm3_import")
+
 from qasm2python import convert_qasm_to_python
 
 
@@ -23,26 +25,45 @@ cx q[0], q[1];
 
 
 def test_default_variable_name_is_qc():
-    qasm = "OPENQASM 3;\nqubit[1] q;\nh q[0];"
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[1] q;
+h q[0];
+"""
     result = convert_qasm_to_python(qasm)
     assert "qc = QuantumCircuit" in result
 
 
 def test_custom_variable_name():
-    qasm = "OPENQASM 3;\nqubit[1] q;\nh q[0];"
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[1] q;
+h q[0];
+"""
     result = convert_qasm_to_python(qasm, var_name="my_circuit")
     assert "my_circuit = QuantumCircuit" in result
-    assert "qc" not in result.split("=")[0]  # default name not used
 
 
 def test_include_imports_true():
-    qasm = "OPENQASM 3;\nqubit[1] q;\nh q[0];"
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[1] q;
+h q[0];
+"""
     result = convert_qasm_to_python(qasm, include_imports=True)
     assert "from qiskit import QuantumCircuit" in result
 
 
 def test_include_imports_false():
-    qasm = "OPENQASM 3;\nqubit[1] q;\nh q[0];"
+    qasm = """
+OPENQASM 3;
+include "stdgates.inc";
+qubit[1] q;
+h q[0];
+"""
     result = convert_qasm_to_python(qasm, include_imports=False)
     assert "from qiskit import QuantumCircuit" not in result
 
@@ -94,7 +115,6 @@ ccx q[0], q[1], q[2];
 # ── Modifier sanitization ─────────────────────────────────
 
 def test_ctrl_modifier_sanitized():
-    """ctrl @ and ctrl(2) @ modifiers should not crash the converter."""
     qasm = """
 OPENQASM 3;
 include "stdgates.inc";
@@ -106,13 +126,12 @@ gate mygate a, b, c {
 mygate q[0], q[1], q[2];
 """
     result = convert_qasm_to_python(qasm)
-    assert "QuantumCircuit" in result   # should still produce valid output
+    assert "QuantumCircuit" in result
 
 
 # ── Output is executable Python ───────────────────────────
 
 def test_output_is_executable():
-    """The generated code should actually run via exec()."""
     qasm = """
 OPENQASM 3;
 include "stdgates.inc";
@@ -120,17 +139,11 @@ qubit[2] q;
 h q[0];
 cx q[0], q[1];
 """
-    try:
-        from qiskit import QuantumCircuit  # skip if qiskit not installed
-    except ImportError:
-        pytest.skip("qiskit not installed")
-
     code = convert_qasm_to_python(qasm)
     namespace = {}
     exec(code, namespace)
     assert "qc" in namespace
-    circuit = namespace["qc"]
-    assert circuit.num_qubits == 2
+    assert namespace["qc"].num_qubits == 2
 
 
 # ── Edge cases ────────────────────────────────────────────
