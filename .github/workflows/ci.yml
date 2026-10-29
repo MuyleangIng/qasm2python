@@ -1,20 +1,16 @@
 # ============================================================
 # .github/workflows/ci.yml
-# Place this file at: .github/workflows/ci.yml
-# in your qasm2python repo
 # ============================================================
-#
 # This workflow does 4 things automatically:
-#   1. LINT    — check code style with flake8
-#   2. TEST    — run pytest on Python 3.9, 3.10, 3.11, 3.12
-#   3. REVIEW  — Claude AI reviews every Pull Request
-#   4. PUBLISH — auto-publish to PyPI when you push a version tag
+#   1. LINT      — check code style with flake8
+#   2. TEST      — run pytest on Python 3.9, 3.10, 3.11, 3.12
+#   3. AUTO-FIX  — Claude reads changed files, fixes style/docs,
+#                  and commits the fixes back to your PR branch
+#   4. PUBLISH   — auto-publish to PyPI on version tags (v1.2.3)
 #
-# SETUP (one time):
-#   Go to GitHub → your repo → Settings → Secrets → Actions
-#   Add these secrets:
-#     ANTHROPIC_API_KEY  → your Anthropic key (for Claude review)
-#     PYPI_API_TOKEN     → your PyPI token   (for auto-publish)
+# SECRETS needed (Settings → Secrets → Actions → Repository secrets):
+#   ANTHROPIC_API_KEY  → your Anthropic key
+#   PYPI_API_TOKEN     → your PyPI token
 # ============================================================
 
 name: CI/CD
@@ -22,7 +18,7 @@ name: CI/CD
 on:
   push:
     branches: [main]
-    tags: ["v*.*.*"]          # triggers PyPI publish on version tags
+    tags: ["v*.*.*"]
   pull_request:
     branches: [main]
 
@@ -83,18 +79,23 @@ jobs:
             --tb=short
 
   # ────────────────────────────────────────────────────────
-  # JOB 3: Claude AI Code Review (runs on Pull Requests only)
+  # JOB 3: Claude AI Auto-Fix + Commit (PR only)
+  # Claude reads every changed .py file, fixes style/docs,
+  # then commits the fixes back to your PR branch automatically
   # ────────────────────────────────────────────────────────
-  claude-review:
-    name: Claude AI Review
+  claude-autofix:
+    name: Claude AI Auto-Fix
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     needs: lint
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0    # need full history to get the diff
+          fetch-depth: 0
+          ref: ${{ github.head_ref }}
 
       - uses: actions/setup-python@v5
         with:
@@ -103,67 +104,102 @@ jobs:
       - name: Install Anthropic SDK
         run: pip install anthropic
 
-      - name: Get PR diff
-        id: diff
+      - name: Get changed Python files
         run: |
           git diff origin/${{ github.base_ref }}...HEAD \
-            -- '*.py' > pr_diff.txt
-          echo "diff_lines=$(wc -l < pr_diff.txt)" >> $GITHUB_OUTPUT
+            --name-only -- '*.py' > changed_files.txt
+          echo "Changed files:"
+          cat changed_files.txt
 
-      - name: Run Claude review
+      - name: Claude auto-fix changed files
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           python - <<'EOF'
-          import anthropic, sys, json, os
-
-          diff = open("pr_diff.txt").read()
-          if not diff.strip():
-              print("No Python changes to review.")
-              sys.exit(0)
+          import anthropic, sys, os
 
           client = anthropic.Anthropic()
-          response = client.messages.create(
-              model="claude-opus-4-6",
-              max_tokens=1024,
-              messages=[{
-                  "role": "user",
-                  "content": f"""You are reviewing a Pull Request for the qasm2python package.
-          This package converts OpenQASM 2.0/3.0 code into Qiskit Python code.
+          changed = open("changed_files.txt").read().strip().splitlines()
 
-          Review the following git diff and provide:
-          1. A brief summary of what changed
-          2. Any bugs or logic errors
-          3. Any issues specific to QASM parsing or Qiskit circuit generation
-          4. Code quality suggestions
-          5. Overall verdict: APPROVE or REQUEST_CHANGES
+          if not changed:
+              print("No Python files changed — nothing to fix.")
+              sys.exit(0)
 
-          Git diff:
-          ```
-          {diff[:6000]}
-          ```
+          any_fixed = False
 
-          Keep your review concise and actionable."""
-              }]
-          )
+          for filepath in changed:
+              if not os.path.exists(filepath):
+                  print(f"Skipping {filepath} (deleted)")
+                  continue
 
-          review = response.content[0].text
-          print("=" * 60)
-          print("CLAUDE CODE REVIEW")
-          print("=" * 60)
-          print(review)
-          print("=" * 60)
+              original = open(filepath).read()
+              print(f"\n{'='*60}\nReviewing: {filepath}\n{'='*60}")
 
-          # Fail the CI if Claude recommends changes
-          if "REQUEST_CHANGES" in review.upper():
-              print("\n⚠️  Claude recommends changes — marking as failed.")
-              sys.exit(1)
+              response = client.messages.create(
+                  model="claude-opus-4-6",
+                  max_tokens=4096,
+                  messages=[{
+                      "role": "user",
+                      "content": f"""You are an expert Python code fixer for the qasm2python package.
+          This package converts OpenQASM 2.0/3.0 into executable Qiskit Python code.
+
+          Fix the following Python file. Apply ALL of these fixes:
+          - PEP 8: exactly 2 blank lines between top-level functions/classes
+          - PEP 8: all imports must be at the very top of the file
+          - PEP 8: max line length 100 chars
+          - Add or improve docstrings on functions that are missing them
+          - Fix any obvious bugs or logic errors
+          - Do NOT change any logic or behaviour — only style and doc fixes
+
+          Return ONLY the complete fixed Python file contents.
+          Do NOT include any explanation, markdown fences, or commentary.
+          Return raw Python code only.
+
+          File: {filepath}
+          Contents:
+          {original}"""
+                  }]
+              )
+
+              fixed = response.content[0].text.strip()
+
+              # Strip accidental markdown fences
+              if fixed.startswith("```python"):
+                  fixed = fixed[len("```python"):].lstrip("\n")
+              if fixed.startswith("```"):
+                  fixed = fixed[3:].lstrip("\n")
+              if fixed.endswith("```"):
+                  fixed = fixed[:-3].rstrip("\n")
+
+              if fixed != original:
+                  open(filepath, "w").write(fixed + "\n")
+                  print(f"  ✅ Fixed: {filepath}")
+                  any_fixed = True
+              else:
+                  print(f"  ✓  No changes needed: {filepath}")
+
+          if any_fixed:
+              open("autofix_needed.txt", "w").write("yes")
+              print("\n📝 Fixes ready to commit.")
           else:
-              print("\n✅  Claude approved the PR.")
+              print("\n✓ All files already clean.")
           EOF
 
+      - name: Commit fixes back to PR branch
+        run: |
+          if [ -f autofix_needed.txt ]; then
+            git config user.name  "Claude AI"
+            git config user.email "claude-ai@anthropic.com"
+            git add -A
+            git commit -m "fix(auto): Claude AI style and docstring fixes"
+            git push origin HEAD:${{ github.head_ref }}
+            echo "✅ Claude's fixes committed and pushed to PR branch."
+          else
+            echo "✓ Nothing to commit — code was already clean."
+          fi
+
   # ────────────────────────────────────────────────────────
-  # JOB 4: Publish to PyPI (only on version tags like v1.2.3)
+  # JOB 4: Publish to PyPI (version tags only e.g. v1.2.3)
   # ────────────────────────────────────────────────────────
   publish:
     name: Publish to PyPI
